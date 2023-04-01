@@ -4,12 +4,11 @@
 """ """
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from collections import defaultdict
 
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_bolt.request import BoltRequest
 
 
 @dataclass
@@ -47,7 +46,7 @@ class Auction:
 
 load_dotenv()
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
-auction = Auction()
+auctions = defaultdict(Auction)
 
 
 def get_channel_users(client, channel):
@@ -56,14 +55,19 @@ def get_channel_users(client, channel):
     return set(users).difference([me])
 
 
-def start_auction(say, command, client):
+def start_auction(say, respond, command, client):
     user = command["user_id"]
     channel = command["channel_id"]
     participants = get_channel_users(client, channel)
     participant_list = ",".join(f"<@{user}>" for user in participants)
 
-    auction.begin(participants)
+    if auctions[channel].active:
+        respond(
+            "An auction is already running. Let it finish, or use `/auction cancel` to end it"
+        )
+        return
 
+    auctions[channel].begin(participants)
     blocks = [
         {
             "type": "section",
@@ -95,23 +99,23 @@ def start_auction(say, command, client):
 def stop_auction(say, respond, command):
     user = command["user_id"]
     channel = command["channel_id"]
-    if auction.active:
-        auction.end()
+    if auctions[channel].active:
+        auctions[channel].end()
         say(
             text=f"<@{user}> has canceled the auction. All bids have been discarded.",
             channel=channel,
         )
     else:
-        respond("No auction is in progress.")
+        respond("No auction is in progress in this channel.")
 
 
 def poke_users(say, respond, command):
     channel = command["channel_id"]
-    if auction.active:
-        to_be_poked = ",".join(f"<@{user}>" for user in auction.has_not_bid)
+    if auctions[channel].active:
+        to_be_poked = ",".join(f"<@{user}>" for user in auctions[channel].has_not_bid)
         say(text=f"Waiting on {to_be_poked} for bids", channel=channel)
     else:
-        respond("No one to poke: no auction is in progress.")
+        respond("No one to poke: no auction is in progress in this channel.")
 
 
 def make_modal_text(title, message):
@@ -131,6 +135,15 @@ def make_modal_text(title, message):
     }
 
 
+def get_usage():
+    return (
+        "Hello! I understand these commands:\n\n"
+        " - `/auction start` - start an auction\n\n"
+        " - `/auction cancel` - cancel an auction\n\n"
+        " - `/auction poke` - poke users who have not bid in an auction\n\n"
+    )
+
+
 @app.command("/auction")
 def handle_command(ack, say, respond, command, client):
     ack()
@@ -138,12 +151,10 @@ def handle_command(ack, say, respond, command, client):
         poke_users(say, respond, command)
     elif command["text"].startswith("cancel"):
         stop_auction(say, respond, command)
-    elif auction.active:
-        respond(
-            "An auction is already running. Let it finish, or use `/auction cancel` to end it"
-        )
+    elif command["text"].startswith("start"):
+        start_auction(say, respond, command, client)
     else:
-        start_auction(say, command, client)
+        respond(get_usage())
 
 
 @app.action("bid_placed-action")
@@ -152,6 +163,8 @@ def handle_bid(ack, say, body, client):
     bid = body["actions"][0]["value"]
     user = body["user"]["id"]
     trigger_id = body["trigger_id"]
+    channel = body["container"]["channel_id"]
+    auction = auctions[channel]
     if not auction.active:
         client.views_open(
             trigger_id=trigger_id,
@@ -166,7 +179,7 @@ def handle_bid(ack, say, body, client):
                 f" - <@{user}>: {bid}" for user, bid in auction.bids.items()
             )
             text = f"The auction has concluded! The bids were:\n\n {results}"
-            say(text=text)
+            say(text=text, channel=channel)
             auction.end()
         else:
             client.views_open(
