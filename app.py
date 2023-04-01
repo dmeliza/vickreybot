@@ -55,11 +55,11 @@ def get_channel_users(client, channel):
     return set(users).difference([me])
 
 
-def start_auction(say, respond, command, client):
+def start_auction(respond, command, client):
     user = command["user_id"]
     channel = command["channel_id"]
     participants = get_channel_users(client, channel)
-    participant_list = ",".join(f"<@{user}>" for user in participants)
+    participant_list = ", ".join(f"<@{user}>" for user in participants)
 
     if auctions[channel].active:
         respond(
@@ -68,52 +68,30 @@ def start_auction(say, respond, command, client):
         return
 
     auctions[channel].begin(participants)
-    blocks = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"<@{user}> has initiated an auction. Awaiting bids from {participant_list}. "
-                "Bids will be revealed once everyone has placed theirs. Until then, bids can be changed. "
-                "Commands: `/auction cancel` will terminate the auction without revealing bids. "
-                "`/auction poke` will notify all participants who have not yet bid.",
-            },
-        },
-        {
-            "dispatch_action": True,
-            "type": "input",
-            "element": {
-                "type": "plain_text_input",
-                "placeholder": {
-                    "type": "plain_text",
-                    "text": "Enter a number (or 'pass')",
-                },
-                "action_id": "bid_placed-action",
-            },
-            "label": {"type": "plain_text", "text": "Your bid:", "emoji": True},
-        },
-    ]
-    say(blocks=blocks, text=f"<@{user}> is initiating an auction!", channel=channel)
+    respond(
+        f"<@{user}> has initiated an auction. Use `/bid` to place your sealed bid. Awaiting bids from {participant_list}.",
+        response_type="in_channel",
+    )
 
 
-def stop_auction(say, respond, command):
+def stop_auction(respond, command):
     user = command["user_id"]
     channel = command["channel_id"]
     if auctions[channel].active:
         auctions[channel].end()
-        say(
-            text=f"<@{user}> has canceled the auction. All bids have been discarded.",
-            channel=channel,
+        respond(
+            f"<@{user}> has canceled the auction. All bids have been discarded.",
+            response_type="in_channel",
         )
     else:
         respond("No auction is in progress in this channel.")
 
 
-def poke_users(say, respond, command):
+def poke_users(respond, command):
     channel = command["channel_id"]
     if auctions[channel].active:
         to_be_poked = ",".join(f"<@{user}>" for user in auctions[channel].has_not_bid)
-        say(text=f"Waiting on {to_be_poked} for bids", channel=channel)
+        respond(f"Waiting on {to_be_poked} for bids", response_type="in_channel")
     else:
         respond("No one to poke: no auction is in progress in this channel.")
 
@@ -145,50 +123,46 @@ def get_usage():
 
 
 @app.command("/auction")
-def handle_command(ack, say, respond, command, client):
+def handle_command(ack, respond, command, client):
     ack()
     if command["text"].startswith("poke"):
-        poke_users(say, respond, command)
+        poke_users(respond, command)
     elif command["text"].startswith("cancel"):
-        stop_auction(say, respond, command)
+        stop_auction(respond, command)
     elif command["text"].startswith("start"):
-        start_auction(say, respond, command, client)
+        start_auction(respond, command, client)
     else:
         respond(get_usage())
 
 
-@app.action("bid_placed-action")
-def handle_bid(ack, say, body, client):
+@app.command("/bid")
+def handle_bid(ack, respond, command, client):
     ack()
-    bid = body["actions"][0]["value"]
-    user = body["user"]["id"]
-    trigger_id = body["trigger_id"]
-    channel = body["container"]["channel_id"]
+    user = command["user_id"]
+    channel = command["channel_id"]
+    bid = command["text"]
     auction = auctions[channel]
-    if not auction.active:
-        client.views_open(
-            trigger_id=trigger_id,
-            view=make_modal_text(
-                "Error", "No auction is active. Start one with `/auction init`"
-            ),
+    if len(bid) == 0:
+        respond("`/bid` an amount (or a message to pass)", response_type="ephemeral")
+    elif not auction.active:
+        respond(
+            "No auction is active. Start one with `/auction init`",
+            response_type="ephemeral",
         )
     else:
         auction.bid(user, bid)
-        if auction.done:
+        if not auction.done:
+            respond(
+                f"Your bid of *{bid}* has been recorded. It can be changed until all users have bid.",
+                response_type="ephemeral",
+            )
+        else:
             results = "\n\n".join(
                 f" - <@{user}>: {bid}" for user, bid in auction.bids.items()
             )
             text = f"The auction has concluded! The bids were:\n\n {results}"
-            say(text=text, channel=channel)
+            respond(text, response_type="in_channel")
             auction.end()
-        else:
-            client.views_open(
-                trigger_id=trigger_id,
-                view=make_modal_text(
-                    "Bid received",
-                    f"Your bid of {bid} has been recorded. It can be changed until all users have bid.",
-                ),
-            )
 
 
 if __name__ == "__main__":
