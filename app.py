@@ -146,7 +146,7 @@ def handle_bid(ack, respond, command, client):
         respond("`/bid` an amount (or a message to pass)", response_type="ephemeral")
     elif not auction.active:
         respond(
-            "No auction is active. Start one with `/auction init`",
+            "No auction is active. Start one with `/auction start`",
             response_type="ephemeral",
         )
     else:
