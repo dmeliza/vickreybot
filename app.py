@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 # -*- mode: python -*-
 """ """
+
 import os
+import re
 from dataclasses import dataclass, field
 from collections import defaultdict
 
@@ -20,8 +22,10 @@ class Auction:
     participants: set[str] = field(default_factory=set)
     bids: dict[str, str] = field(default_factory=dict)
 
-    def begin(self, participants):
+    def set_participants(self, participants):
         self.participants = set(participants)
+
+    def begin(self):
         self.bids = dict()
         self.active = True
 
@@ -55,19 +59,56 @@ def get_channel_users(client, channel):
     return set(users).difference([me])
 
 
+def config_active_users(respond, command, client):
+    channel = command["channel_id"]
+    auction = auctions[channel]
+    command = command["text"].strip()
+    players = set(re.findall(r"@[\w.-]+", command))
+    if len(players) == 0:
+        respond("`/auction players <@user1> <@user2> ... ` ", response_type="ephemeral")
+        return
+    valid_users = []
+    try:
+        channel_users = client.conversations_members(channel=channel).data["members"]
+        for handle in players:
+            user_id = handle[1:]  # remove `@`
+            if user_id in channel_users:
+                valid_users.append(user_id)
+    except Exception as err:
+        respond(f"Error validating channel members: {err}", response_type="ephemeral")
+        return
+    if valid_users:
+        users_list = ", ".join([f"<@{user}>" for user in valid_users])
+        respond(
+            f"Auction participants updated: {users_list}\n", response_type="in_channel"
+        )
+        auction.set_participants(valid_users)
+    else:
+        respond(
+            "Unable to update participants: no valid handles provided\n",
+            response_type="ephemeral",
+        )
+
+
 def start_auction(respond, command, client):
     user = command["user_id"]
     channel = command["channel_id"]
-    participants = get_channel_users(client, channel)
-    participant_list = ", ".join(f"<@{user}>" for user in participants)
+    auction = auctions[channel]
 
-    if auctions[channel].active:
+    if auction.active:
         respond(
             "An auction is already running. Let it finish, or use `/auction cancel` to end it"
         )
         return
+    if not auction.participants:
+        respond(
+            "The participant list is empty. Set it with `/auction players <list of handles>`",
+            response_type="ephemeral",
+        )
+        return
 
-    auctions[channel].begin(participants)
+    auction.begin()
+    participant_list = ", ".join(f"<@{user}>" for user in auction.participants)
     respond(
         f"<@{user}> has initiated an auction. Use `/bid` to place your sealed bid. Awaiting bids from {participant_list}.",
         response_type="in_channel",
@@ -116,6 +157,7 @@ def make_modal_text(title, message):
 def get_usage():
     return (
         "Hello! I understand these commands:\n\n"
+        " - `/auction players` - set the list of active players\n\n"
         " - `/auction start` - start an auction\n\n"
         " - `/auction cancel` - cancel an auction\n\n"
         " - `/auction poke` - poke users who have not bid in an auction\n\n"
@@ -131,6 +173,8 @@ def handle_command(ack, respond, command, client):
         stop_auction(respond, command)
     elif command["text"].startswith("start"):
         start_auction(respond, command, client)
+    elif command["text"].startswith("players"):
+        config_active_users(respond, command, client)
     else:
         respond(get_usage())
 
