@@ -63,6 +63,12 @@ def config_active_users(respond, command, client):
     channel = command["channel_id"]
     auction = auctions[channel]
     command = command["text"].strip()
+    if auction.active:
+        respond(
+            "An auction is currently running. Let it finish, or use `/auction cancel` to end it before reconfiguring participants."
+        )
+        return
+
     players = set(re.findall(r"@[\w.-]+", command))
     if len(players) == 0:
         respond("`/auction players <@user1> <@user2> ... ` ", response_type="ephemeral")
