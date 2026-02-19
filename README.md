@@ -1,6 +1,8 @@
 
 # Vickreybot
 
+This project has been moved to codeberg: https://codeberg.org/dmeliza/vickreybot
+
 A very simple slack app for running Vickrey auctions or any other kind of activity where everyone in the channel needs to make some commitment in secret. 
 
 ## Installation
